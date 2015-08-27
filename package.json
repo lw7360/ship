@@ -1,0 +1,27 @@
+{
+  "name": "ship",
+  "version": "0.0.1",
+  "description": "Ship",
+  "main": "index.js",
+  "scripts": {
+    "test": "mocha --reporter spec"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lw7360/ship.git"
+  },
+  "author": "Larry Wu <lw7360@gmail.com> (http://larrywu.com)",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/lw7360/ship/issues"
+  },
+  "homepage": "https://github.com/lw7360/ship#readme",
+  "devDependencies": {
+    "chai": "^3.2.0",
+    "mocha": "^2.2.5"
+  },
+  "dependencies": {
+    "bluebird": "^2.9.34",
+    "openpgp": "^1.2.0"
+  }
+}

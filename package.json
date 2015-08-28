@@ -2,7 +2,8 @@
   "name": "ship",
   "version": "0.0.1",
   "description": "Ship",
-  "main": "index.js",
+  "bin": "ship.js",
+  "preferGlobal": true,
   "scripts": {
     "test": "mocha --reporter spec"
   },
@@ -22,6 +23,9 @@
   },
   "dependencies": {
     "bluebird": "^2.9.34",
-    "openpgp": "^1.2.0"
+    "lodash": "^3.10.1",
+    "openpgp": "^1.2.0",
+    "path-exists": "^1.0.0",
+    "yargs": "^3.21.0"
   }
 }

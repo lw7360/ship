@@ -3,19 +3,47 @@
 var argv = require('yargs').demand(1).argv;
 var expandTilde = require('expand-tilde');
 var fs = require('fs');
+var inquirer = require('inquirer');
 var mkdirp = require('mkdirp');
-var yargs = require('yargs');
+var Promise = require('bluebird');
+var openpgp = require('openpgp');
 
-// console.log(argv);
+Promise.promisifyAll(fs);
+
+var shipPath = expandTilde('~') + '/.ship';
 
 if (argv._.length === 1) {
   switch(argv._[0]) {
     case 'init':
       // Initialize Ship in ~/.ship
-      var shipPath = expandTilde('~') + '/.ship';
-      var success = mkdirp.sync(shipPath);
-      if (success) {
-        console.log('Ship has been initialized in ' + success);
+      if (mkdirp.sync(shipPath)) {
+        var gitConfirm = {
+          type: 'confirm',
+          name: 'git',
+          message: 'Do you want a Git repository to be enabled?'
+        };
+
+        var passphraseQuestion = {
+          type: 'password',
+          name: 'passphrase',
+          message: 'Enter a super secure passphrase: ',
+        };
+        
+        inquirer.prompt([gitConfirm, passphraseQuestion], function (answers) {
+          var options = {
+            numBits: 2048,
+            userId: 'Ship Key <ship.key@example.org>',
+            passphrase: answers.passphrase
+ 
+          };
+
+          console.log('Generating PGP key...');
+          openpgp.generateKeyPair(options).then(function(keypair) {
+            console.log('Ship has been initialized!');
+          }).catch(function(error) {
+            console.log(error); 
+          });
+        });
       } else {
         console.log('Looks like you already initialized Ship before.');
       }

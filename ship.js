@@ -6,6 +6,7 @@ var exec = require("child_process").exec;
 var expandTilde = require("expand-tilde");
 var defaults = require("./lib/defaults");
 var fs = require("fs-extra");
+var FuzzySet = require("fuzzyset.js");
 var inquirer = require("inquirer");
 var mkdirp = require("mkdirp");
 var pwgen = require("pwgenjs");
@@ -130,7 +131,22 @@ function generatePass(length) {
 }
 
 // Finds a password
-function findPassword() {
+function findPassword(id) {
+  var ship = getShip();
+  var ids = Object.keys(ship);
+  var shipSet = FuzzySet();
+  ids.forEach(function(i) {
+    shipSet.add(i);
+  });
+
+  var closestMatch = shipSet.get(id);
+
+  if (closestMatch === null) { // no match
+    return false;
+  }
+  var matchId = closestMatch[0][1];
+
+  return ship[matchId];
 }
 
 // Prints out Ship
@@ -159,6 +175,13 @@ if (argv._.length) {
       break;
     default:
       // Search for a password
+      var id = argv._[0];
+      var pass = findPassword(id);
+      if (pass) {
+        console.log(copyPaste.copy(pass));
+      } else {
+        console.log('A password for "' + id + '" was not found.');
+      }
   }
 } else {
   if (isShipInit()) {

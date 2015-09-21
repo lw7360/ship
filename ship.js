@@ -22,6 +22,8 @@ var shipJsonEncrypted   = shipPath + 'ship';
 var shipConfigEncrypted = shipPath + 'config';
 var shipKeys            = shipPath + 'keys';
 
+var shipPass = '';
+
 // Returns whether Ship has already been initialized 
 // i.e. whether ~/.ship, ~/.ship/ship.json, and ~/.ship/config.json all exist
 function isShipInit() {
@@ -84,6 +86,7 @@ function getShip() {
     
     try {
       var decryptedShip = cryptohelper.decryptObject(pass, keys, encryptedShip);
+      shipPass = pass;
       fs.writeJSONSync(shipJson, decryptedShip);
       return decryptedShip;
     } catch(err) {
@@ -107,6 +110,7 @@ function getShipConfig() {
     
     try {
       var decryptedShipConfig = cryptohelper.decryptObject(pass, keys, encryptedShipConfig);
+      shipPass = pass;
       fs.writeJSONSync(shipConfig, decryptedShipConfig);
       return decryptedShipConfig;
     } catch(err) {
@@ -116,13 +120,41 @@ function getShipConfig() {
 }
 
 function saveShip(ship) {
+  var pass = shipPass;
+  var keys = fs.readJSONSync(shipKeys);
 
+  if (!pass) {
+    inquirer.prompt([defaults.passphraseQuestion], function(answers) {
+      pass = answers.passphrase;
+      var encryptedShip = cryptohelper.encryptObject(pass, keys, ship);
+      fs.writeJSONSync(shipJson, ship);
+      fs.writeJSONSync(shipJsonEncrypted, encryptedShip);
+    });
+  } else {
+    var encryptedShip = cryptohelper.encryptObject(pass, keys, ship);
+    fs.writeJSONSync(shipJson, ship);
+    fs.writeJSONSync(shipJsonEncrypted, encryptedShip);
+  }
 }
 
 // Add a password to Ship
 function addToShip(id, pass) {
   var ship = getShip();
   ship[id] = pass;
+  saveShip(ship);
+}
+
+// Remove a password from Ship
+function removeFromShip(id) {
+  var ship = getShip();
+  var closestMatch = matchId(id);
+  if (closestMatch) {
+    delete ship[id];
+    saveShip(ship);
+    console.log('Removed "' + id + '" from Ship');
+  } else {
+    console.log('Could not find "' + id + '" to remove.');
+  }
 }
 
 // Generate a password
@@ -130,8 +162,8 @@ function generatePass(length) {
   return pwgen(length);
 }
 
-// Finds a password
-function findPassword(id) {
+// Finds the closest matching id for given id
+function matchId(id) {
   var ship = getShip();
   var ids = Object.keys(ship);
   var shipSet = FuzzySet();
@@ -141,17 +173,28 @@ function findPassword(id) {
 
   var closestMatch = shipSet.get(id);
 
-  if (closestMatch === null) { // no match
-    return false;
+  if (closestMatch) {
+    return closestMatch[0][1];
   }
-  var matchId = closestMatch[0][1];
 
-  return ship[matchId];
+  return false;
+}
+
+// Finds a password
+function findPassword(id) {
+  var ship = getShip();
+  var closestMatch = matchId(id);
+
+  return ship[closestMatch];
 }
 
 // Prints out Ship
 function printShip() {
-  console.log('Ship');
+  var ship = getShip();
+  var ids = Object.keys(ship);
+  ids.forEach(function(i) {
+    console.log(i);
+  });
 }
 
 if (argv._.length) {
@@ -165,9 +208,17 @@ if (argv._.length) {
       break;
     case 'add':
       // Add a password to Ship
+      var id = argv._[1];
+      var pass = argv._[2];
+      if (!id || !pass) {
+        console.log('Not enough arguments to add a password.');
+      } else {
+        addToShip(id, pass);
+      }
       break;
     case 'rm':
       // Remove a password from Ship
+      removeFromShip(argv._[1]);
       break;
     case 'generate':
       // Generate a password

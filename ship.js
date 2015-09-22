@@ -9,10 +9,11 @@ var fs = require("fs-extra");
 var FuzzySet = require("fuzzyset.js");
 var inquirer = require("inquirer");
 var mkdirp = require("mkdirp");
+var Promise = require("bluebird");
 var pwgen = require("pwgenjs");
 
 var argv = require("yargs").argv;
-  // .completion('completion').argv;
+Promise.promisifyAll(inquirer);
 
 var shipPath            = expandTilde('~') + '/.ship/';
 var shipTmp             = shipPath + 'tmp/';
@@ -23,6 +24,19 @@ var shipConfigEncrypted = shipPath + 'config';
 var shipKeys            = shipPath + 'keys';
 
 var shipPass = '';
+
+// Returns a promise with password.
+// Will prompt user for password the first time this function is called.
+function getPassword() {
+  if (shipPass) {
+    return Promise.resolve(shipPass);
+  }
+
+  // Use 'error' because inquirer.js doesn't use error first callbacks.
+  return inquirer.promptAsync(defaults.passphraseQuestion).error(function(answers) {
+    return answers.passphrase;
+  });
+}
 
 // Returns whether Ship has already been initialized 
 // i.e. whether ~/.ship, ~/.ship/ship.json, and ~/.ship/config.json all exist
@@ -57,7 +71,7 @@ function initShip() {
     fs.copySync('./lib/ship.gitignore', shipPath + '.gitignore');
 
     if (answers.git) {
-      exec('cd ' + shipPath + ' && git init && git add . && git commit -m "Initial Ship commit"', function(err, stdout, stderr) {
+      exec('cd ' + shipPath + ' && ' + defaults.gitInit, function(err, stdout, stderr) {
         if (err) {
           console.log("Git couldn't be initialized at: " + shipPath);
           console.log("But other than that, Ship is ready to go.");
@@ -71,90 +85,73 @@ function initShip() {
   });
 }
 
-// Returns the Ship object if it's cached,
-// otherwise, will prompt for password.
+// Returns the Ship object in a Promise.
 function getShip() {
   var shipJsonExists = fs.statSync(shipJson).isFile();
   if (shipJsonExists) {
-    return fs.readJSONSync(shipJson);
+    return Promise.resolve(fs.readJSONSync(shipJson));
   }
 
-  inquirer.prompt([defaults.passphraseQuestion], function(answers) {
-    var pass = answers.passphrase;
+  return getPassword().then(function(pass) {
     var encryptedShip = fs.readJSONSync(shipJsonEncrypted);
     var keys = fs.readJSONSync(shipKeys);
-    
+
     try {
       var decryptedShip = cryptohelper.decryptObject(pass, keys, encryptedShip);
-      shipPass = pass;
-      fs.writeJSONSync(shipJson, decryptedShip);
-      return decryptedShip;
     } catch(err) {
       console.log('The passphrase you entered was incorrect.');
+      return err;
     }
+    shipPass = pass;
+    fs.writeJSONSync(shipJson, decryptedShip);
+    return decryptedShip;
   });
 }
 
-// Returns the Config object if it's cached,
-// otherwise, will prompt for password.
-function getShipConfig() {
-  var shipConfigExists = fs.statSync(shipConfig).isFile();
-  if (shipConfigExists) {
-    return fs.readJSONSync(shipConfig);
-  }
-
-  inquirer.prompt([defaults.passphraseQuestion], function(answers) {
-    var pass = answers.passphrase;
-    var encryptedShipConfig = fs.readJSONSync(shipConfigEncrypted);
-    var keys = fs.readJSONSync(shipKeys);
-    
-    try {
-      var decryptedShipConfig = cryptohelper.decryptObject(pass, keys, encryptedShipConfig);
-      shipPass = pass;
-      fs.writeJSONSync(shipConfig, decryptedShipConfig);
-      return decryptedShipConfig;
-    } catch(err) {
-      console.log('The passphrase you entered was incorrect.');
-    }
-  });
-}
-
+// Save ship, will return Promise resolving in boolean value for success or failure.
 function saveShip(ship) {
-  var pass = shipPass;
-  var keys = fs.readJSONSync(shipKeys);
-
-  if (!pass) {
-    inquirer.prompt([defaults.passphraseQuestion], function(answers) {
-      pass = answers.passphrase;
+  return getPassword().then(function(pass) {
+    var keys = fs.readJSONSync(shipKeys);
+    try {
       var encryptedShip = cryptohelper.encryptObject(pass, keys, ship);
-      fs.writeJSONSync(shipJson, ship);
-      fs.writeJSONSync(shipJsonEncrypted, encryptedShip);
-    });
-  } else {
-    var encryptedShip = cryptohelper.encryptObject(pass, keys, ship);
+    } catch (err) {
+      console.log('The passphrase you entered was incorrect.');
+      return false;
+    }
+    shipPass = pass;
     fs.writeJSONSync(shipJson, ship);
     fs.writeJSONSync(shipJsonEncrypted, encryptedShip);
-  }
+    return true
+  });
 }
 
 // Add a password to Ship
 function addToShip(id, pass) {
-  var ship = getShip();
-  ship[id] = pass;
-  saveShip(ship);
+  return getShip().then(function(ship) {
+    ship[id] = pass;
+    return saveShip(ship);
+  });
 }
 
 // Remove a password from Ship
 function removeFromShip(id) {
-  var ship = getShip();
-  var closestMatch = matchId(id);
-  if (closestMatch) {
-    delete ship[id];
-    saveShip(ship);
-    console.log('Removed "' + id + '" from Ship');
-  } else {
-    console.log('Could not find "' + id + '" to remove.');
-  }
+  return Promise.all([getShip(), matchId(id)]).then(function(all) {
+    var ship = all[0];
+    var closestMatch = all[1];
+    if (closestMatch) {
+      delete ship[id];
+      saveShip(ship).then(function(success) {
+        if (success) {
+          console.log('Removed "' + closestMatch + '" from Ship');
+        } else {
+          console.log('Could not find "' + id + '" to remove.');
+        }
+      });
+    } else {
+      console.log('Could not find "' + id + '" to remove.');
+      return false;
+    }
+  });
 }
 
 // Generate a password
@@ -162,38 +159,45 @@ function generatePass(length) {
   return pwgen(length);
 }
 
-// Finds the closest matching id for given id
+// Finds the closest matching id for given id, returns as a promise
 function matchId(id) {
-  var ship = getShip();
-  var ids = Object.keys(ship);
-  var shipSet = FuzzySet();
-  ids.forEach(function(i) {
-    shipSet.add(i);
+  return getShip().then(function(ship) {
+    var ids = Object.keys(ship);
+    var shipSet = FuzzySet();
+    ids.forEach(function(i) {
+      shipSet.add(i);
+    });
+  
+    var closestMatch = shipSet.get(id);
+    if (closestMatch) {
+      return closestMatch[0][1];
+    }
+    return false;
   });
-
-  var closestMatch = shipSet.get(id);
-
-  if (closestMatch) {
-    return closestMatch[0][1];
-  }
-
-  return false;
 }
 
-// Finds a password
+// Finds a password, returns as a promise
 function findPassword(id) {
-  var ship = getShip();
-  var closestMatch = matchId(id);
+  return Promise.all([getShip(), matchId(id)]).then(function(all) {
+    var ship = all[0];
+    var closestMatch = all[1];
 
-  return ship[closestMatch];
+    if (closestMatch) {
+      return [closestMatch, ship[closestMatch]];
+    }
+    return false; 
+  });
 }
 
 // Prints out Ship
 function printShip() {
-  var ship = getShip();
-  var ids = Object.keys(ship);
-  ids.forEach(function(i) {
-    console.log(i);
+  console.log('Ship');
+  console.log('----');
+  getShip().then(function(ship) {
+    var ids = Object.keys(ship);
+    ids.forEach(function(i) {
+      console.log(i);
+    });
   });
 }
 
@@ -227,12 +231,16 @@ if (argv._.length) {
     default:
       // Search for a password
       var id = argv._[0];
-      var pass = findPassword(id);
-      if (pass) {
-        console.log(copyPaste.copy(pass));
-      } else {
-        console.log('A password for "' + id + '" was not found.');
-      }
+      findPassword(id).then(function(res) {
+        var matchId = res[0];
+        var pass = res[1];
+        if (pass) {
+          copyPaste.copy(pass);
+          console.log(matchId + ': ' + pass);
+        } else {
+          console.log('A password for "' + id + '" was not found.');
+        }
+      });
   }
 } else {
   if (isShipInit()) {
